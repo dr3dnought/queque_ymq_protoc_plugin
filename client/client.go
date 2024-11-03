@@ -183,7 +183,7 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 
 				return err
 			}
-			log.Println(attemptCount)
+
 			_, err := c.sqs.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
 				QueueUrl:          &c.queueUrl,
 				ReceiptHandle:     msg.ReceiptHandle,
