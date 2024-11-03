@@ -12,7 +12,7 @@ import (
 	"github.com/dr3dnought/queque_ymq_protoc_plugin/types"
 )
 
-
+var wasNack = false
 
 func main() {
 	cfg := &config.Config{
@@ -42,9 +42,19 @@ func main() {
 	ctx := context.Background()
 
 	for {
-		err := cl.Consume(ctx, func(ctx context.Context, m1 client.Message, m2 *types.Meta) (types.Result, error) {
-			fmt.Println(m1.Info)
-			return types.DEFER, nil
+		err := cl.Consume(ctx, func(ctx context.Context, msg client.Message, m2 *types.Meta) types.Result {
+			fmt.Println(msg.Info)
+			if msg.Info == "1" {
+				return types.ACK
+			}
+			if msg.Info == "2" {
+				if !wasNack {
+					wasNack = true
+					return types.NACK
+				}
+				return types.ACK
+			}
+			return types.DEFER
 		})
 
 		if err != nil {

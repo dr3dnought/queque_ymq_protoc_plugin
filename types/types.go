@@ -14,7 +14,9 @@ type Meta struct {
 	AttemptCount int
 }
 
-type ConsumerFunc[T any] func(context.Context, T, *Meta) (Result, error)
+type ConsumerFunc[T any] func(context.Context, T, *Meta) Result
+
+type CunsumerHandlerErrFunc func(error)
 
 type Consumer[T any] interface {
 	Consume(ctx context.Context, handler ConsumerFunc[T]) error

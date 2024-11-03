@@ -3,8 +3,9 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -27,10 +28,11 @@ type Message struct {
 }
 
 type Client struct {
-	cfg      *config.Config
-	queueUrl string
-	mu       sync.RWMutex
-	sqs      *sqs.Client
+	cfg       *config.Config
+	queueUrl  string
+	mu        sync.RWMutex
+	sqs       *sqs.Client
+	errHander types.CunsumerHandlerErrFunc
 }
 
 func New(cfg *config.Config, httpClient *http.Client) *Client {
@@ -129,7 +131,7 @@ func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handle
 		}
 	}
 
-	result, err := handler(ctx, *dest, &types.Meta{
+	result := handler(ctx, *dest, &types.Meta{
 		AttemptCount: attemptCount,
 	})
 	if err != nil {
@@ -146,55 +148,108 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 	}
 
 	received, err := c.sqs.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-		QueueUrl:        &c.queueUrl,
-		WaitTimeSeconds: 10,
+		QueueUrl:            &c.queueUrl,
+		WaitTimeSeconds:     10,
+		MaxNumberOfMessages: 10,
 	})
+	if err != nil {
+		return err
+	}
 
-	for _, msg := range received.Messages {
-		result, attemptCount, err := c.handleMessage(ctx, msg, handler)
+	dirtyErrors := make([]error, len(received.Messages))
+
+	type handlerOutput struct {
+		msg        awstypes.Message
+		retryCount int
+	}
+
+	acks := make([]*handlerOutput, len(received.Messages))
+	nacks := make([]*handlerOutput, len(received.Messages))
+
+	var wg sync.WaitGroup
+	wg.Add(len(received.Messages))
+
+	for i, msg := range received.Messages {
+		go func(i int) {
+			result, attemptCount, err := c.handleMessage(ctx, msg, handler)
+			if err != nil {
+				dirtyErrors[i] = err
+				wg.Done()
+				return
+			}
+
+			switch result {
+			case types.ACK:
+				acks[i] = &handlerOutput{
+					msg: msg,
+				}
+			case types.NACK:
+				nacks[i] = &handlerOutput{
+					msg:        msg,
+					retryCount: 0,
+				}
+			case types.DEFER:
+				if attemptCount > c.cfg.MaxRetryCount {
+					acks[i] = &handlerOutput{
+						msg: msg,
+					}
+				} else {
+					nacks[i] = &handlerOutput{
+						msg:        msg,
+						retryCount: attemptCount,
+					}
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+
+	wg.Wait()
+
+	var commonErrors error
+	if clearErrors := slices.DeleteFunc(dirtyErrors, func(err error) bool {
+		return err == nil
+	}); len(clearErrors) > 0 {
+		commonErrors = errors.Join(clearErrors...)
+	}
+
+	if clearAcks := slices.DeleteFunc(acks, func(ouput *handlerOutput) bool {
+		return ouput == nil
+	}); len(clearAcks) > 0 {
+		_, err := c.sqs.DeleteMessageBatch(ctx, &sqs.DeleteMessageBatchInput{
+			QueueUrl: &c.queueUrl,
+			Entries: gospadi.Map(clearAcks, func(output *handlerOutput) awstypes.DeleteMessageBatchRequestEntry {
+				return awstypes.DeleteMessageBatchRequestEntry{
+					Id:            output.msg.MessageId,
+					ReceiptHandle: output.msg.ReceiptHandle,
+				}
+			}),
+		})
+
 		if err != nil {
 			return err
 		}
+	}
 
-		switch result {
-		case types.ACK:
-			_, err := c.sqs.DeleteMessage(ctx, &sqs.DeleteMessageInput{
-				QueueUrl:      &c.queueUrl,
-				ReceiptHandle: msg.ReceiptHandle,
-			})
-			if err != nil {
-				return err
-			}
-		case types.NACK:
-			_, err := c.sqs.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
-				QueueUrl:          &c.queueUrl,
-				ReceiptHandle:     msg.ReceiptHandle,
-				VisibilityTimeout: 0,
-			})
-			if err != nil {
-				return err
-			}
-		case types.DEFER:
-			if attemptCount > c.cfg.MaxRetryCount {
-				_, err := c.sqs.DeleteMessage(ctx, &sqs.DeleteMessageInput{
-					QueueUrl:      &c.queueUrl,
-					ReceiptHandle: msg.ReceiptHandle,
-				})
+	if clearNacks := slices.DeleteFunc(nacks, func(ouput *handlerOutput) bool {
+		return ouput == nil
+	}); len(clearNacks) > 0 {
+		_, err := c.sqs.ChangeMessageVisibilityBatch(ctx, &sqs.ChangeMessageVisibilityBatchInput{
+			QueueUrl: &c.queueUrl,
+			Entries: gospadi.Map(clearNacks, func(output *handlerOutput) awstypes.ChangeMessageVisibilityBatchRequestEntry {
+				return awstypes.ChangeMessageVisibilityBatchRequestEntry{
+					Id:                output.msg.MessageId,
+					ReceiptHandle:     output.msg.ReceiptHandle,
+					VisibilityTimeout: int32(output.retryCount) * int32(c.cfg.RetryTimestep),
+				}
+			}),
+		})
 
-				return err
-			}
-
-			_, err := c.sqs.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
-				QueueUrl:          &c.queueUrl,
-				ReceiptHandle:     msg.ReceiptHandle,
-				VisibilityTimeout: int32(c.cfg.RetryTimestep) * int32(attemptCount),
-			})
-			if err != nil {
-				return err
-			}
+		if err != nil {
+			return err
 		}
 	}
 
-	return nil
+	return commonErrors
 
 }
