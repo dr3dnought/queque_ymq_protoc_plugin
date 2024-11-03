@@ -1,0 +1,8 @@
+ACCESS_KEY: asd
+SECRET_ACCESS_KEY: 123
+QUEUE_NAME: Asd
+BATCH_SIZE: 123       # default: 20
+MAX_RETRY_COUNT: 123  # default: 5
+RETRY_TIMESTEP: 5
+REGION: ru-central1
+BASE_URL: sadasd
