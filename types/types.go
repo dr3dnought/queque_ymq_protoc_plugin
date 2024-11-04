@@ -16,8 +16,6 @@ type Meta struct {
 
 type ConsumerFunc[T any] func(context.Context, T, *Meta) Result
 
-type CunsumerHandlerErrFunc func(error)
-
 type Consumer[T any] interface {
 	Consume(ctx context.Context, handler ConsumerFunc[T]) error
 }

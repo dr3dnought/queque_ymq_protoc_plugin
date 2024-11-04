@@ -14,9 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/dr3dnought/gospadi"
-	"github.com/dr3dnought/queque_ymq_protoc_plugin/config"
-	"github.com/dr3dnought/queque_ymq_protoc_plugin/types"
+	types "github.com/dr3dnought/quequetypes"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -28,15 +28,13 @@ type Message struct {
 }
 
 type Client struct {
-	cfg       *config.Config
-	queueUrl  string
-	mu        sync.RWMutex
-	sqs       *sqs.Client
-	errHander types.CunsumerHandlerErrFunc
+	cfg      *types.Config
+	queueUrl string
+	mu       sync.RWMutex
+	sqs      *sqs.Client
 }
 
-func New(cfg *config.Config, httpClient *http.Client) *Client {
-
+func New(cfg *types.Config, httpClient *http.Client) *Client {
 	sqsConfig := aws.NewConfig()
 	sqsConfig.Region = cfg.Region
 	sqsConfig.Credentials = credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretAccessKey, "")
@@ -48,39 +46,6 @@ func New(cfg *config.Config, httpClient *http.Client) *Client {
 		cfg: cfg,
 		sqs: client,
 	}
-}
-
-func (c *Client) createQueue(ctx context.Context) error {
-	c.mu.Lock()
-
-	if c.queueUrl != "" {
-		c.mu.Unlock()
-		return nil
-	}
-
-	queue, err := c.sqs.CreateQueue(ctx, &sqs.CreateQueueInput{
-		QueueName: &c.cfg.QueueName,
-	})
-	if err != nil {
-		c.mu.Unlock()
-		return err
-	}
-
-	c.queueUrl = *queue.QueueUrl
-	c.mu.Unlock()
-	return nil
-}
-
-func (c *Client) ensureConnection(ctx context.Context) error {
-	c.mu.RLock()
-
-	if c.queueUrl == "" {
-		c.mu.RUnlock()
-		return c.createQueue(ctx)
-	}
-
-	c.mu.RUnlock()
-	return nil
 }
 
 func (c *Client) Produce(ctx context.Context, msgs ...Message) error {
@@ -114,33 +79,6 @@ func (c *Client) Produce(ctx context.Context, msgs ...Message) error {
 	return err
 }
 
-func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[Message]) (types.Result, int, error) {
-
-	dest := new(Message)
-	err := json.Unmarshal([]byte(*msg.Body), dest)
-	if err != nil {
-		return -1, -1, err
-	}
-
-	attemptCount := 0
-	v, ok := msg.Attributes[attemptNumberAttributeKey]
-	if ok {
-		attemptCount, err = strconv.Atoi(v)
-		if err != nil {
-			return -1, -1, err
-		}
-	}
-
-	result := handler(ctx, *dest, &types.Meta{
-		AttemptCount: attemptCount,
-	})
-	if err != nil {
-		return -1, -1, err
-	}
-
-	return result, attemptCount, nil
-}
-
 func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message]) error {
 	err := c.ensureConnection(ctx)
 	if err != nil {
@@ -170,7 +108,7 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 	wg.Add(len(received.Messages))
 
 	for i, msg := range received.Messages {
-		go func(i int) {
+		go func(i int, msg awstypes.Message) {
 			result, attemptCount, err := c.handleMessage(ctx, msg, handler)
 			if err != nil {
 				dirtyErrors[i] = err
@@ -201,7 +139,7 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 				}
 			}
 			wg.Done()
-		}(i)
+		}(i, msg)
 	}
 
 	wg.Wait()
@@ -252,4 +190,64 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 
 	return commonErrors
 
+}
+
+func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[Message]) (types.Result, int, error) {
+
+	dest := new(Message)
+	err := proto.Unmarshal([]byte(*msg.Body), dest)
+	if err != nil {
+		return -1, -1, err
+	}
+
+	attemptCount := 0
+	v, ok := msg.Attributes[attemptNumberAttributeKey]
+	if ok {
+		attemptCount, err = strconv.Atoi(v)
+		if err != nil {
+			return -1, -1, err
+		}
+	}
+
+	result := handler(ctx, *dest, &types.Meta{
+		AttemptCount: attemptCount,
+	})
+	if err != nil {
+		return -1, -1, err
+	}
+
+	return result, attemptCount, nil
+}
+
+func (c *Client) createQueue(ctx context.Context) error {
+	c.mu.Lock()
+
+	if c.queueUrl != "" {
+		c.mu.Unlock()
+		return nil
+	}
+
+	queue, err := c.sqs.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName: &c.cfg.QueueName,
+	})
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
+
+	c.queueUrl = *queue.QueueUrl
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) ensureConnection(ctx context.Context) error {
+	c.mu.RLock()
+
+	if c.queueUrl == "" {
+		c.mu.RUnlock()
+		return c.createQueue(ctx)
+	}
+
+	c.mu.RUnlock()
+	return nil
 }

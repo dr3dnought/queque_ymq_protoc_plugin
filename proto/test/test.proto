@@ -8,4 +8,8 @@ message Greeting {
   string text = 1;
 }
 
+message Msg {
 
+  string name = 1;
+
+}

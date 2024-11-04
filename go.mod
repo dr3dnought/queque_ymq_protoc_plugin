@@ -7,7 +7,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.42
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.36.3
 	github.com/dr3dnought/gospadi v0.0.0-20241020093613-f1bee3b49af4
+	github.com/dr3dnought/quequetypes v0.0.0-20241104145147-b483c4925147
 	github.com/google/uuid v1.6.0
+	google.golang.org/protobuf v1.35.1
 )
 
 require (
