@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+
+
+option go_package = "/test";
+
+
+message Popa {
+
+  string name = 1;
+
+}
