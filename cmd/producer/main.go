@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/dr3dnought/queque_ymq_protoc_plugin/client"
-	"github.com/dr3dnought/queque_ymq_protoc_plugin/config"
+	"github.com/dr3dnought/queque_ymq_protoc_plugin/internal/generated/proto/popa"
+	types "github.com/dr3dnought/quequetypes"
 )
 
 var (
@@ -20,9 +21,9 @@ var (
 
 func main() {
 	flag.Parse()
-	cfg := &config.Config{
 		AccessKey:       "",
 		SecretAccessKey: "",
+	cfg := &types.Config{
 		QueueName:       "oleg",
 		Region:          "ru-central1",
 		BaseUrl:         "https://message-queue.api.cloud.yandex.net",
@@ -47,13 +48,13 @@ func main() {
 	ctx := context.Background()
 
 	for range 10 {
-		msgs := make([]client.Message, 0, 100)
+		msgs := make([]*popa.Popa, 0, 10)
 		for range 10 {
 			info := rand.Intn(2)
 			info += 1
 			strinfo := strconv.Itoa(info)
-			msgs = append(msgs, client.Message{
-				Info: strinfo,
+			msgs = append(msgs, &popa.Popa{
+				Name: strinfo,
 			})
 		}
 

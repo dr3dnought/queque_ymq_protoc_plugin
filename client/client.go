@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/dr3dnought/gospadi"
+	"github.com/dr3dnought/queque_ymq_protoc_plugin/internal/generated/proto/popa"
 	types "github.com/dr3dnought/quequetypes"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -22,10 +22,6 @@ import (
 const (
 	attemptNumberAttributeKey = "ApproximateReceiveCount"
 )
-
-type Message struct {
-	Info string
-}
 
 type Client struct {
 	cfg      *types.Config
@@ -48,15 +44,15 @@ func New(cfg *types.Config, httpClient *http.Client) *Client {
 	}
 }
 
-func (c *Client) Produce(ctx context.Context, msgs ...Message) error {
+func (c *Client) Produce(ctx context.Context, msgs ...*popa.Popa) error {
 
 	err := c.ensureConnection(ctx)
 	if err != nil {
 		return err
 	}
 
-	entries, err := gospadi.MapErr(msgs, func(m Message) (awstypes.SendMessageBatchRequestEntry, error) {
-		bytes, err := json.Marshal(m)
+	entries, err := gospadi.MapErr(msgs, func(m *popa.Popa) (awstypes.SendMessageBatchRequestEntry, error) {
+		bytes, err := proto.Marshal(m)
 		if err != nil {
 			return awstypes.SendMessageBatchRequestEntry{}, err
 		}
@@ -79,7 +75,7 @@ func (c *Client) Produce(ctx context.Context, msgs ...Message) error {
 	return err
 }
 
-func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message]) error {
+func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[*popa.Popa]) error {
 	err := c.ensureConnection(ctx)
 	if err != nil {
 		return err
@@ -192,9 +188,9 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[Message
 
 }
 
-func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[Message]) (types.Result, int, error) {
+func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[*popa.Popa]) (types.Result, int, error) {
 
-	dest := new(Message)
+	dest := new(popa.Popa)
 	err := proto.Unmarshal([]byte(*msg.Body), dest)
 	if err != nil {
 		return -1, -1, err
@@ -209,7 +205,7 @@ func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handle
 		}
 	}
 
-	result := handler(ctx, *dest, &types.Meta{
+	result := handler(ctx, dest, &types.Meta{
 		AttemptCount: attemptCount,
 	})
 	if err != nil {
