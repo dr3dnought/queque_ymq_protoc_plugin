@@ -10,6 +10,7 @@ import (
 
 const imports = `import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"slices"
@@ -80,7 +81,8 @@ func (g *Generator) generateMethods() error {
 		MsgName: g.msgName,
 	}
 
-	functions := `func New(cfg *types.Config, httpClient *http.Client) *Client {
+	functions := `
+func New(cfg *types.Config, httpClient *http.Client) *Client {
 	sqsConfig := aws.NewConfig()
 	sqsConfig.Region = cfg.Region
 	sqsConfig.Credentials = credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretAccessKey, "")
@@ -103,13 +105,15 @@ func (c *Client) Produce(ctx context.Context, msgs ...*{{.MsgName}}) error {
 
 	entries, err := gospadi.MapErr(msgs, func(m *{{.MsgName}}) (awstypes.SendMessageBatchRequestEntry, error) {
 		bytes, err := proto.Marshal(m)
+		encoded := base64.StdEncoding.EncodeToString(bytes)
+
 		if err != nil {
 			return awstypes.SendMessageBatchRequestEntry{}, err
 		}
 		return awstypes.SendMessageBatchRequestEntry{
 			DelaySeconds: 0,
 			Id:           aws.String(uuid.New().String()),
-			MessageBody:  aws.String(string(bytes)),
+			MessageBody:  aws.String(encoded),
 		}, nil
 	})
 
@@ -235,12 +239,18 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[*{{.Msg
 	}
 
 	return commonErrors
+
 }
 
 func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[*{{.MsgName}}]) (types.Result, int, error) {
 
+	decoded, err := base64.StdEncoding.DecodeString(*msg.Body)
+	if err != nil {
+		return -1, -1, err
+	}
+
 	dest := new({{.MsgName}})
-	err := proto.Unmarshal([]byte(*msg.Body), dest)
+	err = proto.Unmarshal(decoded, dest)
 	if err != nil {
 		return -1, -1, err
 	}

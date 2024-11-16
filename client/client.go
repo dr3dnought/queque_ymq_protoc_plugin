@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"slices"
@@ -53,13 +54,15 @@ func (c *Client) Produce(ctx context.Context, msgs ...*popa.Popa) error {
 
 	entries, err := gospadi.MapErr(msgs, func(m *popa.Popa) (awstypes.SendMessageBatchRequestEntry, error) {
 		bytes, err := proto.Marshal(m)
+		encoded := base64.StdEncoding.EncodeToString(bytes)
+
 		if err != nil {
 			return awstypes.SendMessageBatchRequestEntry{}, err
 		}
 		return awstypes.SendMessageBatchRequestEntry{
 			DelaySeconds: 0,
 			Id:           aws.String(uuid.New().String()),
-			MessageBody:  aws.String(string(bytes)),
+			MessageBody:  aws.String(encoded),
 		}, nil
 	})
 
@@ -190,8 +193,13 @@ func (c *Client) Consume(ctx context.Context, handler types.ConsumerFunc[*popa.P
 
 func (c *Client) handleMessage(ctx context.Context, msg awstypes.Message, handler types.ConsumerFunc[*popa.Popa]) (types.Result, int, error) {
 
+	decoded, err := base64.StdEncoding.DecodeString(*msg.Body)
+	if err != nil {
+		return -1, -1, err
+	}
+
 	dest := new(popa.Popa)
-	err := proto.Unmarshal([]byte(*msg.Body), dest)
+	err = proto.Unmarshal(decoded, dest)
 	if err != nil {
 		return -1, -1, err
 	}

@@ -15,9 +15,9 @@ import (
 var wasNack = false
 
 func main() {
+	cfg := &types.Config{
 		AccessKey:       "",
 		SecretAccessKey: "",
-	cfg := &types.Config{
 		QueueName:       "oleg",
 		Region:          "ru-central1",
 		BaseUrl:         "https://message-queue.api.cloud.yandex.net",
