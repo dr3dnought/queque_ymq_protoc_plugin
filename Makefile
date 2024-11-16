@@ -4,3 +4,10 @@ generate:
 	--queque-ymq_out=internal/generated --queque-ymq_opt=paths=source_relative,msg=Msg+Popa \
 	proto/*/*.proto
 
+
+build:
+	mkdir -p build
+	go build -o ./build/protoc-gen-queque-ymq ./cmd/protoc-gen-queque-ymq 
+
+install:
+	cp ./build/protoc-gen-queque-ymq ${GOPATH}/bin
